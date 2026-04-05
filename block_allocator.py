@@ -5,7 +5,7 @@ class Block:
     def __init__(self, block_id:int, size: int):
         self.block_id = block_id
         self.size = size
-        self.num_filled = 0 # how many tokens
+        self.num_filled = 0 # num tokens we are storing KV tensors for
         self.ref_count = 0
     def is_full(self):
         return self.num_filled == self.size
