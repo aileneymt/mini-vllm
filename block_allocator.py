@@ -46,7 +46,7 @@ class BlockAllocator:
 
     # return (block_id, slot index) of the newest position allocated
     def allocate_decode(self, request_id: int) -> tuple[int, int]:
-        if request_id not in self.block_table:
+        if not self.request_exists(request_id):
             raise LookupError(f"Request {request_id} does not exist")
         '''
         Allocate a new block for this request if:
@@ -81,7 +81,7 @@ class BlockAllocator:
     
     # frees the blocks associated with the given request, if they are not being shared
     def free(self, request_id: int) -> bool:
-        if request_id not in self.block_table:
+        if not self.request_exists(request_id):
             raise LookupError(f"Request {request_id} does not exist")
 
         for block_id in self.block_table[request_id]:
@@ -95,6 +95,10 @@ class BlockAllocator:
             
         del self.block_table[request_id]
         return True
+    
+    def request_exists(self, request_id: int) -> bool:
+        return request_id in self.block_table
+
 
         
     
