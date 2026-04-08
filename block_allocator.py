@@ -44,8 +44,8 @@ class BlockAllocator:
         self.free_blocks.difference_update(self.block_table[request_id])
         return self.block_table[request_id]
 
-
-    def allocate_decode(self, request_id: int) -> bool:
+    # return (block_id, slot index) of the newest position allocated
+    def allocate_decode(self, request_id: int) -> tuple[int, int]:
         if request_id not in self.block_table:
             raise LookupError(f"Request {request_id} does not exist")
         '''
@@ -75,8 +75,9 @@ class BlockAllocator:
             self.free_blocks.remove(block_id)
         
         # increment num_filled for the last block of this request
-        self.all_blocks[self.block_table[request_id][-1]].num_filled += 1
-        return True
+        last_block_id = self.block_table[request_id][-1]
+        self.all_blocks[last_block_id].num_filled += 1
+        return (last_block_id, self.all_blocks[last_block_id].num_filled)
     
     # frees the blocks associated with the given request, if they are not being shared
     def free(self, request_id: int) -> bool:
