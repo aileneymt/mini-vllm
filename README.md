@@ -1,6 +1,6 @@
 # mini-vllm
 
-> A minimal LLM inference engine implementing PagedAttention-style KV cache management on GPT-2. Based on the "Efficient Memory Management for Large Language Model Serving with PagedAttention" paper.
+> A minimal LLM inference engine implementing PagedAttention-style KV cache management on NanoGPT. Based on the "Efficient Memory Management for Large Language Model Serving with PagedAttention" paper.
 
 ---
 
