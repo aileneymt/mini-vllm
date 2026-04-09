@@ -6,9 +6,15 @@ class KVCache:
     # uses BlockAllocator to know where to store them
     # write and read from the KV cache
     def __init__(self, total_blocks: int, block_size: int, num_layers: int, num_heads: int, head_dim: int):
-        shape = (total_blocks, block_size, num_heads, head_dim)
-        self.k_cache = [torch.zeros(shape, device='cuda') for _ in range(num_layers)]
-        self.v_cache = [torch.zeros(shape, device='cuda') for _ in range(num_layers)]
+        self.block_size = block_size
+        self.num_layers = num_layers
+        self.num_heads = num_heads
+        self.head_dim = head_dim
+
+        shape = (num_layers, total_blocks, block_size, num_heads, head_dim)
+        self.k_cache = torch.zeros(shape, device='cuda')
+        self.v_cache = torch.zeros(shape, device='cuda')
+
     '''
     Take new key/value tensors for a SINGLE TOKEN
     start_pos captures the offset in the entire k_cache, not just starting from a single block
@@ -17,19 +23,17 @@ class KVCache:
     def write(self, layer_idx: int, block_ids: list[int], token_pos: int, key, val):
         # key and val shape [12 (num_heads), 64 (head_dim)] since its for ONE token
 
-        block_size = len(self.k_cache[0][0])
-        logical_block_idx = token_pos // block_size
+        logical_block_idx = token_pos // self.block_size
         phys_block_idx = block_ids[logical_block_idx]
 
-        offset = token_pos % block_size
+        offset = token_pos % self.block_size
         self.k_cache[layer_idx][phys_block_idx][offset] = key
         self.v_cache[layer_idx][phys_block_idx][offset] = val
     
     def read(self, layer_idx: int, block_ids: list[int], token_pos: int):
-        block_size = len(self.k_cache[0][0])
-        logical_block_idx = token_pos // block_size
+        logical_block_idx = token_pos // self.block_size
         phys_block_idx = block_ids[logical_block_idx]
-        offset = token_pos % block_size
+        offset = token_pos % self.block_size
 
         return (self.k_cache[layer_idx][phys_block_idx][offset], self.v_cache[layer_idx][phys_block_idx][offset])
     
@@ -38,14 +42,13 @@ class KVCache:
     delegates to write() if necessary
     '''
     def write_batch(self, layer_idx: int, block_ids: list[int], key, val):
-        block_size = len(self.k_cache[0][0])
         token_pos = 0
         num_tokens = len(key)
         while token_pos < num_tokens:
-            logical_block_idx = token_pos // block_size
+            logical_block_idx = token_pos // self.block_size
             phys_block_idx = block_ids[logical_block_idx]
-            tokens_in_block = min(num_tokens - token_pos, block_size)
-            start, end = logical_block_idx*block_size, logical_block_idx*block_size + tokens_in_block
+            tokens_in_block = min(num_tokens - token_pos, self.block_size)
+            start, end = logical_block_idx*self.block_size, logical_block_idx*self.block_size + tokens_in_block
             
             self.k_cache[layer_idx][phys_block_idx][:tokens_in_block] = key[start:end]
             self.v_cache[layer_idx][phys_block_idx][:tokens_in_block] = val[start:end]
@@ -54,10 +57,9 @@ class KVCache:
     def read_batch(self, layer_idx: int, block_ids: list[int], num_tokens: int):
         k_list = []
         v_list = []
-        block_size = len(self.k_cache[0][0])
 
         for log_block_idx, phys_block_id in enumerate(block_ids):
-            tokens_in_block = block_size if log_block_idx < len(block_ids) - 1 else num_tokens % block_size or block_size
+            tokens_in_block = self.block_size if log_block_idx < len(block_ids) - 1 else num_tokens % self.block_size or self.block_size
             k_list.append(self.k_cache[layer_idx][phys_block_id][:tokens_in_block])
             v_list.append(self.v_cache[layer_idx][phys_block_id][:tokens_in_block])
         k_full = torch.cat(k_list, dim=0)

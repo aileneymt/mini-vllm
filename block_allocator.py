@@ -62,8 +62,8 @@ class BlockAllocator:
             block_id = next(it)
             new_block = self.all_blocks[block_id]
             new_block.ref_count = 1
-            
             # if the last block was shared, remove the reference and replace its id in our block table
+            
             if self.block_table[request_id] and self.all_blocks[self.block_table[request_id][-1]].ref_count > 1:
                 shared_block = self.all_blocks[self.block_table[request_id][-1]]
                 shared_block.ref_count -= 1
