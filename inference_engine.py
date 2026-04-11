@@ -43,16 +43,15 @@ class InferenceEngine:
         logits, _ = self.model(idx)
         idx_next = self.__sample(logits)
         idx = torch.cat((idx, idx_next), dim=1)
-        self.requests[req_id] += 1
 
         # decode stage
         while self.requests[req_id] - num_tokens_prompt < self.max_tokens:
             self.allocator.allocate_decode(req_id)
+            self.requests[req_id] += 1
             self.__prepare_attention(req_id)
             logits, _ = self.model(idx_next)
             idx_next = self.__sample(logits)
             idx = torch.cat((idx, idx_next), dim=1)
-            self.requests[req_id] += 1
         
         # free memory associated with request
         self.allocator.free(req_id) # don't need to do anything in kv_cache, we'll just overwrite

@@ -14,6 +14,7 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+from kv_cache import KVCache
 
 class LayerNorm(nn.Module):
     """ LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False """
@@ -41,6 +42,12 @@ class CausalSelfAttention(nn.Module):
         self.n_head = config.n_head
         self.n_embd = config.n_embd
         self.dropout = config.dropout
+
+        self.kv_cache = None
+        self.layer_idx = None
+        self.block_list = None
+        self.token_pos = None
+
         # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
         if not self.flash:
@@ -51,13 +58,25 @@ class CausalSelfAttention(nn.Module):
 
     def forward(self, x):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
-
+        '''
+        Fields set by InferenceEngine: layer_idx: int, request_id: int, kv_cache: KVCache, block_list: list[int], token_pos: int
+        '''
+        is_prefill = x.shape[1] > 1
+        
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
         q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)
-        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs) (1, 12, num tokens, 64)
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        
+        if is_prefill:
+            self.kv_cache.write_batch(self.layer_idx, self.block_list, k.squeeze(0).permute(1, 0, 2), v.squeeze(0).permute(1, 0, 2))
+        else:
+            self.kv_cache.write(self.layer_idx, self.block_list, self.token_pos, k.squeeze() v.squeeze())
+            k, v = self.kv_cache.read_batch(self.layer_idx, self.block_list, self.token_pos) # (0: num tokens, 1: num heads, 2: head dims)
+            k, v = k.permute(1, 0, 2).unsqueeze(0), v.permute(1, 0, 2).unsqueeze(0)
 
+        
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         if self.flash:
             # efficient attention using Flash Attention CUDA kernels
