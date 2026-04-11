@@ -35,7 +35,7 @@ class InferenceEngine:
         req_id = self.__reqCtr
         self.__reqCtr += 1
         num_tokens_prompt = idx.shape[1]
-        self.requests[req_id] = num_tokens_prompt
+        self.requests[req_id] = num_tokens_prompt - 1
 
         # prefill stage
         self.allocator.allocate_prefill(req_id, num_tokens_prompt)

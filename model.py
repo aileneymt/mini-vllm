@@ -72,7 +72,7 @@ class CausalSelfAttention(nn.Module):
         if is_prefill:
             self.kv_cache.write_batch(self.layer_idx, self.block_list, k.squeeze(0).permute(1, 0, 2), v.squeeze(0).permute(1, 0, 2))
         else:
-            self.kv_cache.write(self.layer_idx, self.block_list, self.token_pos, k.squeeze() v.squeeze())
+            self.kv_cache.write(self.layer_idx, self.block_list, self.token_pos, k.squeeze(), v.squeeze())
             k, v = self.kv_cache.read_batch(self.layer_idx, self.block_list, self.token_pos) # (0: num tokens, 1: num heads, 2: head dims)
             k, v = k.permute(1, 0, 2).unsqueeze(0), v.permute(1, 0, 2).unsqueeze(0)
 
