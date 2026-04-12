@@ -68,19 +68,19 @@ class CausalSelfAttention(nn.Module):
         k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs) (1, 12, num tokens, 64)
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        
         if is_prefill:
             self.kv_cache.write_batch(self.layer_idx, self.block_list, k.squeeze(0).permute(1, 0, 2), v.squeeze(0).permute(1, 0, 2))
         else:
             self.kv_cache.write(self.layer_idx, self.block_list, self.token_pos, k.squeeze(), v.squeeze())
-            k, v = self.kv_cache.read_batch(self.layer_idx, self.block_list, self.token_pos) # (0: num tokens, 1: num heads, 2: head dims)
+            k, v = self.kv_cache.read_batch(self.layer_idx, self.block_list, self.token_pos + 1) # (0: num tokens, 1: num heads, 2: head dims)
             k, v = k.permute(1, 0, 2).unsqueeze(0), v.permute(1, 0, 2).unsqueeze(0)
+            
 
-        
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         if self.flash:
             # efficient attention using Flash Attention CUDA kernels
-            y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
+            is_causal = (q.shape[2] == k.shape[2]) 
+            y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=is_causal)
         else:
             # manual implementation of attention
             att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
@@ -186,11 +186,11 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx, targets=None):
+    def forward(self, idx, targets=None, position_offset=0):
         device = idx.device
         b, t = idx.size()
-        assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
-        pos = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
+        assert position_offset + t <= self.config.block_size, f"Cannot forward sequence ending at position {position_offset + t - 1}, block size is only {self.config.block_size}"
+        pos = torch.arange(position_offset, position_offset + t, dtype=torch.long, device=device) # shape (t)
 
         # forward the GPT model itself
         tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)

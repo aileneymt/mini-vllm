@@ -12,8 +12,8 @@ class InferenceEngine:
     # can handle multiple requests
     def __init__(self, total_blocks: int, block_size: int, max_tokens=50, temp=1.0):
         self.max_tokens = max_tokens
-        self.config = GPTConfig()
-        self.model = GPT(self.config)
+        self.model = GPT.from_pretrained('gpt2')
+        self.config = self.model.config
         self.allocator = BlockAllocator(total_blocks, block_size)
         self.kv_cache = KVCache(total_blocks, block_size, self.config.n_layer, self.config.n_head, self.config.n_embd // self.config.n_head)
         self.requests: dict[int, int] = {} # map request id -> number of tokens in the request
@@ -49,7 +49,7 @@ class InferenceEngine:
             self.allocator.allocate_decode(req_id)
             self.requests[req_id] += 1
             self.__prepare_attention(req_id)
-            logits, _ = self.model(idx_next)
+            logits, _ = self.model(idx_next, position_offset=self.requests[req_id])
             idx_next = self.__sample(logits)
             idx = torch.cat((idx, idx_next), dim=1)
         
@@ -60,8 +60,11 @@ class InferenceEngine:
         # return the decoded result
         return self.tokenizer.decode(idx[0].tolist())
     
-    def __sample(self, logits):
+    def __sample(self, logits, top_k=50):
         logits = logits[:, -1, :] / self.temp
+        # keep only top k tokens
+        v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+        logits[logits < v[:, [-1]]] = float('-inf')
         probs = F.softmax(logits, dim=-1)
         idx_next = torch.multinomial(probs, num_samples=1)
         return idx_next
