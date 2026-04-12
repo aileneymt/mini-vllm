@@ -20,7 +20,10 @@ The engine is composed of three core components:
 
 **BlockAllocator** — Maintains state of blocks, allocates for prefill and decode stages, and frees once requests are complete.
 
+![image](https://github.com/aileneymt/mini-vllm/blob/main/images/block_allocator_diagram.png)
+
 **KVCache** — Uses the block table managed by BlockAllocator to determine where in the pre-allocated GPU tensor to read and write KV tensors.
+
 ![image](https://github.com/aileneymt/mini-vllm/blob/main/images/kv_cache_diagram1.png)
 ![image](https://github.com/aileneymt/mini-vllm/blob/main/images/kv_cache_diagram2.png)
 
