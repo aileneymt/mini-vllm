@@ -52,7 +52,7 @@ Key Features
    * Configurable Parameters: Allows testing across different prompt lengths, token counts, and memory configurations (block size and total blocks).
    * Automated Reporting: Appends timing data to a CSV file (benchmark_results.csv) for tracking and analysis.
 
-The [benchmark_results_viz.ipynb](https://github.com/aileneymt/mini-vllm/blob/benchmark/benchmarking/) notebook visualizes the data from the output CSV. It graphs Average Runtime vs Generated Tokens, KV Cache Speedup by Trial, and Throughput by Trial (tokens/sec).
+The [benchmark_results_viz.ipynb](https://github.com/aileneymt/mini-vllm/blob/main/benchmarking/benchmark_results_viz.ipynb) notebook visualizes the data from the output CSV. It graphs Average Runtime vs Generated Tokens, KV Cache Speedup by Trial, and Throughput by Trial (tokens/sec).
 
 On CPU, the KV cache implementation typically provides a **2x to 10x** speedup for moderate generation lengths (200-500 tokens), significantly reducing latency as the sequence grows.
 
