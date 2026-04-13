@@ -2,3 +2,4 @@
 # Gemini CLI Skills
 skills/
 *.skill
+__pycache__/

@@ -7,120 +7,20 @@ import time
 from argparse import ArgumentParser
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import torch
-import torch.nn as nn
-from torch.nn import functional as F
 from transformers import GPT2Tokenizer
 
-from block_allocator import BlockAllocator
-from kv_cache import KVCache
-from model import GPT
-
-
-def _prepare_attention_cache(model: GPT, kv_cache: KVCache, allocator: BlockAllocator, request_id: int, token_pos: int) -> None:
-	transformer: Any = model.transformer
-	for layer_idx, block in enumerate(transformer.h):
-		block.attn.layer_idx = layer_idx
-		block.attn.request_id = request_id
-		block.attn.kv_cache = kv_cache
-		block.attn.block_list = allocator.block_table[request_id]
-		block.attn.token_pos = token_pos
-
-
-def _sample_next_token(logits: torch.Tensor) -> torch.Tensor:
-	return torch.argmax(logits[:, -1, :], dim=-1, keepdim=True)
-
-
-def _forward_without_kv_cache(model: GPT, idx: torch.Tensor) -> torch.Tensor:
-	device = idx.device
-	batch_size, seq_len = idx.size()
-	assert seq_len <= model.config.block_size, f"Cannot forward sequence of length {seq_len}, block size is only {model.config.block_size}"
-
-	pos = torch.arange(0, seq_len, dtype=torch.long, device=device)
-	transformer: Any = model.transformer
-	transformer_wte = transformer.wte
-	transformer_wpe = transformer.wpe
-	transformer_drop = transformer.drop
-	transformer_ln_f = transformer.ln_f
-	blocks = transformer.h
-
-	x = transformer_drop(transformer_wte(idx) + transformer_wpe(pos))
-
-	for block in blocks:
-		residual = x
-		x = block.ln_1(x)
-
-		query, key, value = block.attn.c_attn(x).split(block.attn.n_embd, dim=2)
-		key = key.view(batch_size, seq_len, block.attn.n_head, block.attn.n_embd // block.attn.n_head).transpose(1, 2)
-		query = query.view(batch_size, seq_len, block.attn.n_head, block.attn.n_embd // block.attn.n_head).transpose(1, 2)
-		value = value.view(batch_size, seq_len, block.attn.n_head, block.attn.n_embd // block.attn.n_head).transpose(1, 2)
-
-		if block.attn.flash:
-			attended = torch.nn.functional.scaled_dot_product_attention(
-				query,
-				key,
-				value,
-				attn_mask=None,
-				dropout_p=block.attn.dropout if block.training else 0,
-				is_causal=True,
-			)
-		else:
-			attention_scores = (query @ key.transpose(-2, -1)) * (1.0 / (key.size(-1) ** 0.5))
-			attention_scores = attention_scores.masked_fill(block.attn.bias[:, :, :seq_len, :seq_len] == 0, float("-inf"))
-			attention_scores = F.softmax(attention_scores, dim=-1)
-			attention_scores = block.attn.attn_dropout(attention_scores)
-			attended = attention_scores @ value
-
-		attended = attended.transpose(1, 2).contiguous().view(batch_size, seq_len, block.attn.n_embd)
-		x = residual + block.attn.resid_dropout(block.attn.c_proj(attended))
-		x = x + block.mlp(block.ln_2(x))
-
-	x = transformer_ln_f(x)
-	return model.lm_head(x[:, [-1], :])
+from inference_engine import InferenceEngine
+from benchmarking.config import BENCHMARK_RESULTS_CSV_PATH
+from benchmarking.nanogpt_model import GPT as NanoGPT
 
 
 @torch.no_grad()
-def generate_with_kv_cache(model: GPT, tokenizer: GPT2Tokenizer, prompt: str, max_new_tokens: int, total_blocks: int, block_size: int) -> torch.Tensor:
+def generate_without_kv_cache(model: Any, tokenizer: GPT2Tokenizer, prompt: str, max_new_tokens: int) -> torch.Tensor:
 	idx = torch.tensor(tokenizer.encode(prompt), dtype=torch.long).unsqueeze(0)
-	request_id = 0
-	num_prompt_tokens = idx.shape[1]
-
-	allocator = BlockAllocator(total_blocks, block_size)
-	kv_cache = KVCache(total_blocks, block_size, model.config.n_layer, model.config.n_head, model.config.n_embd // model.config.n_head)
-
-	allocator.allocate_prefill(request_id, num_prompt_tokens)
-	token_pos = num_prompt_tokens - 1
-	_prepare_attention_cache(model, kv_cache, allocator, request_id, token_pos)
-
-	logits, _ = model(idx)
-	next_token = _sample_next_token(logits)
-	idx = torch.cat((idx, next_token), dim=1)
-
-	generated = 1
-	while generated < max_new_tokens:
-		allocator.allocate_decode(request_id)
-		token_pos += 1
-		_prepare_attention_cache(model, kv_cache, allocator, request_id, token_pos)
-		logits, _ = model(next_token, position_offset=token_pos)
-		next_token = _sample_next_token(logits)
-		idx = torch.cat((idx, next_token), dim=1)
-		generated += 1
-
-	return idx
-
-
-@torch.no_grad()
-def generate_without_kv_cache(model: GPT, tokenizer: GPT2Tokenizer, prompt: str, max_new_tokens: int) -> torch.Tensor:
-	idx = torch.tensor(tokenizer.encode(prompt), dtype=torch.long).unsqueeze(0)
-
-	for _ in range(max_new_tokens):
-		logits = _forward_without_kv_cache(model, idx)
-		next_token = _sample_next_token(logits)
-		idx = torch.cat((idx, next_token), dim=1)
-
-	return idx
+	return model.generate(idx, max_new_tokens)
 
 
 def benchmark_case(label: str, fn, warmup_runs: int = 1, timed_runs: int = 3):
@@ -217,7 +117,7 @@ def build_summary_row(
 
 def main():
 	parser = ArgumentParser(description="Benchmark KV cache vs no KV cache generation performance.")
-	parser.add_argument("--output", type=Path, default=Path("benchmark_results.csv"), help="CSV file to write benchmark results to.")
+	parser.add_argument("--output", type=Path, default=BENCHMARK_RESULTS_CSV_PATH, help="CSV file to write benchmark results to.")
 	parser.add_argument("--prompt", type=str, default="Hi my name is", help="Prompt to benchmark.")
 	parser.add_argument("--new-tokens", type=int, default=200, help="Number of new tokens to generate.")
 	parser.add_argument("--total-blocks", type=int, default=128, help="Number of KV cache blocks available.")
@@ -233,21 +133,23 @@ def main():
 	total_blocks = args.total_blocks
 	block_size = args.block_size
 
-	tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
-	model = GPT.from_pretrained("gpt2")
-	model.eval()
-	execution_device = next(model.parameters()).device.type
+	engine = InferenceEngine(total_blocks, block_size, max_tokens=max_new_tokens)
+	engine.model.eval()
+	tokenizer = engine.tokenizer
+	baseline_model = NanoGPT.from_pretrained("gpt2")
+	baseline_model.eval()
+	execution_device = next(engine.model.parameters()).device.type
 	cuda_available = torch.cuda.is_available()
 
 	cache_result = benchmark_case(
 		"kv_cache",
-		lambda: generate_with_kv_cache(model, tokenizer, prompt, max_new_tokens, total_blocks, block_size),
+		lambda: engine.generate(prompt),
 		warmup_runs=args.warmup_runs,
 		timed_runs=args.timed_runs,
 	)
 	no_cache_result = benchmark_case(
 		"no_kv_cache",
-		lambda: generate_without_kv_cache(model, tokenizer, prompt, max_new_tokens),
+		lambda: generate_without_kv_cache(baseline_model, tokenizer, prompt, max_new_tokens),
 		warmup_runs=args.warmup_runs,
 		timed_runs=args.timed_runs,
 	)
