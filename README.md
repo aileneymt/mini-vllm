@@ -29,12 +29,7 @@ The engine is composed of three core components:
 
 **InferenceEngine**: The orchestrator; receives a prompt, runs prefill, decode loop, frees blocks, and returns output.
 
-```
-prompt
-  └── InferenceEngine
-        ├── BlockAllocator   (manages physical memory blocks)
-        └── KVCache          (stores/retrieves KV tensors per block)
-```
+![images](https://github.com/aileneymt/mini-vllm/blob/main/images/inference_engine_diagram.png)
 
 
 ---
