@@ -50,13 +50,13 @@ Key Features
 
 The [benchmark_results_viz.ipynb](https://github.com/aileneymt/mini-vllm/blob/main/benchmarking/benchmark_results_viz.ipynb) notebook visualizes the data from the output CSV. It graphs Average Runtime vs Generated Tokens, KV Cache Speedup by Trial, and Throughput by Trial (tokens/sec).
 
-On CPU, the KV cache implementation typically provides a **2x to 10x** speedup for moderate generation lengths (200-500 tokens), significantly reducing latency as the sequence grows.
+On CPU, the paged KV cache implementation typically provides a **2x to 10x** speedup compared to no KV cache for moderate generation lengths (200-500 tokens), significantly reducing latency as the sequence grows. When it comes to comparing a paged KV cache and non paged KV cache, there is currently not a significant difference in speedup considering that only sequential generation is supported. Once concurrent requests are implemented, a different is expected.
 
 ---
 
 ### Roadmap
 
-The project has been fully implemented in its most minimal form. Future additions include rewriting BlockAllocator in C++ and enabling prefix-sharing so blocks can be shared between requests.
+The project has been fully implemented in its most minimal form, allowing sequential generation. Currently in progress is implementing concurrent requests to maximize the benefit of a paged KV cache.
 
 ---
 
