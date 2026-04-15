@@ -12,13 +12,12 @@ class KVCache:
         self.head_dim = head_dim
 
         shape = (num_layers, total_blocks, block_size, num_heads, head_dim)
-        self.k_cache = torch.zeros(shape, device='cuda')
-        self.v_cache = torch.zeros(shape, device='cuda')
+        self.k_cache = torch.zeros(shape, device='cpu')
+        self.v_cache = torch.zeros(shape, device='cpu')
 
     '''
     Take new key/value tensors for a SINGLE TOKEN
-    start_pos captures the offset in the entire k_cache, not just starting from a single block
-    token_pos is the token's index in its own request
+    token_pos is the slot that we write to
     '''
     def write(self, layer_idx: int, block_ids: list[int], token_pos: int, key, val):
         # key and val shape [12 (num_heads), 64 (head_dim)] since its for ONE token

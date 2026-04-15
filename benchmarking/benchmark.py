@@ -92,7 +92,7 @@ def build_summary_row(
 	durations = result["durations"]
 	return {
 		"timestamp_utc": timestamp_utc,
-		"benchmark_label": "kv_cache_vs_no_kv_cache",
+		"benchmark_label": "kv_cache_mode_comparison",
 		"execution_device": execution_device,
 		"cuda_available": cuda_available,
 		"mode": mode,
@@ -116,12 +116,18 @@ def build_summary_row(
 
 
 def main():
-	parser = ArgumentParser(description="Benchmark KV cache vs no KV cache generation performance.")
+	parser = ArgumentParser(description="Benchmark paged KV cache, non-paged KV cache, and no KV cache generation performance.")
 	parser.add_argument("--output", type=Path, default=BENCHMARK_RESULTS_CSV_PATH, help="CSV file to write benchmark results to.")
 	parser.add_argument("--prompt", type=str, default="Hi my name is", help="Prompt to benchmark.")
 	parser.add_argument("--new-tokens", type=int, default=200, help="Number of new tokens to generate.")
 	parser.add_argument("--total-blocks", type=int, default=128, help="Number of KV cache blocks available.")
 	parser.add_argument("--block-size", type=int, default=16, help="Tokens per KV cache block.")
+	parser.add_argument(
+		"--non-paged-block-size",
+		type=int,
+		default=None,
+		help="Optional contiguous block size for non-paged KV cache mode. Defaults to prompt_tokens + new_tokens + 2.",
+	)
 	parser.add_argument("--warmup-runs", type=int, default=1, help="Warmup runs before timing.")
 	parser.add_argument("--timed-runs", type=int, default=3, help="Timed runs for each benchmark mode.")
 	args = parser.parse_args()
@@ -136,6 +142,10 @@ def main():
 	engine = InferenceEngine(total_blocks, block_size, max_tokens=max_new_tokens)
 	engine.model.eval()
 	tokenizer = engine.tokenizer
+	prompt_tokens = len(tokenizer.encode(prompt))
+	non_paged_block_size = args.non_paged_block_size or (prompt_tokens + max_new_tokens + 2)
+	non_paged_engine = InferenceEngine(1, non_paged_block_size, max_tokens=max_new_tokens)
+	non_paged_engine.model.eval()
 	baseline_model = NanoGPT.from_pretrained("gpt2")
 	baseline_model.eval()
 	execution_device = next(engine.model.parameters()).device.type
@@ -147,6 +157,12 @@ def main():
 		warmup_runs=args.warmup_runs,
 		timed_runs=args.timed_runs,
 	)
+	non_paged_cache_result = benchmark_case(
+		"kv_cache_no_paging",
+		lambda: non_paged_engine.generate(prompt),
+		warmup_runs=args.warmup_runs,
+		timed_runs=args.timed_runs,
+	)
 	no_cache_result = benchmark_case(
 		"no_kv_cache",
 		lambda: generate_without_kv_cache(baseline_model, tokenizer, prompt, max_new_tokens),
@@ -154,7 +170,6 @@ def main():
 		timed_runs=args.timed_runs,
 	)
 
-	prompt_tokens = len(tokenizer.encode(prompt))
 	total_generated_tokens = prompt_tokens + max_new_tokens
 	timestamp_utc = datetime.now(timezone.utc).isoformat()
 
@@ -163,13 +178,15 @@ def main():
 	print(f"Total tokens processed per run: {total_generated_tokens}")
 	print()
 
-	for result in (cache_result, no_cache_result):
+	for result in (cache_result, non_paged_cache_result, no_cache_result):
 		tokens_per_second = max_new_tokens / result["avg_seconds"]
 		print(f"{result['label']}: {result['avg_seconds']:.4f}s avg over {result['runs']} runs  |  {tokens_per_second:.2f} new tokens/s")
 
 	speedup = no_cache_result["avg_seconds"] / cache_result["avg_seconds"]
+	non_paged_speedup = no_cache_result["avg_seconds"] / non_paged_cache_result["avg_seconds"]
 	print()
 	print(f"KV cache speedup: {speedup:.2f}x")
+	print(f"KV cache (no paging) speedup: {non_paged_speedup:.2f}x")
 
 	csv_rows = [
 		build_summary_row(
@@ -184,6 +201,19 @@ def main():
 			block_size,
 			timestamp_utc,
 			speedup,
+		),
+		build_summary_row(
+			"kv_cache_no_paging",
+			execution_device,
+			cuda_available,
+			{**non_paged_cache_result, "warmup_runs": args.warmup_runs},
+			prompt,
+			prompt_tokens,
+			max_new_tokens,
+			1,
+			non_paged_block_size,
+			timestamp_utc,
+			non_paged_speedup,
 		),
 		build_summary_row(
 			"no_kv_cache",

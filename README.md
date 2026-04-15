@@ -37,10 +37,11 @@ The engine is composed of three core components:
 
 ### Benchmarking
 
-The benchmark.py script evaluates the performance impact of the KV cache implementation by comparing two generation methods:
+The benchmark.py script evaluates the performance impact of KV caching by comparing three generation methods:
 
-   1. KV Cache (Optimized): Uses the InferenceEngine to generate tokens. This method leverages the custom KVCache and BlockAllocator to avoid redundant computations for previously processed tokens. During the autoregressive/decode phase, self-attention is computed using only one token (the output of the preceding forward pass).
-   2. No KV Cache (Baseline): Uses the standard NanoGPT implementation to generate tokens. In this mode, the model performs a full forward pass over the entire growing sequence (prompt + all generated tokens) for every single new token, which is computationally expensive as the sequence length increases.
+   1. KV Cache (Paged): Uses InferenceEngine with a small block size so KV tensors are stored across multiple blocks managed by the allocator.
+   2. KV Cache (No Paging): Uses InferenceEngine with a single large contiguous block, so KV caching is still used but without page-like block splitting.
+   3. No KV Cache (Baseline): Uses the standard NanoGPT implementation to generate tokens. In this mode, the model performs a full forward pass over the entire growing sequence (prompt + all generated tokens) for every single new token, which is computationally expensive as the sequence length increases.
 
 Key Features
    * Metric Tracking: Measures average generation time, tokens per second (TPS), and calculates the specific speedup ratio provided by the KV cache.
